@@ -79,43 +79,46 @@ class XSSScanner:
                 print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} {e}")
 
     def scan_url_params(self, links):
-        """
-        Also test XSS in URL parameters directly.
-        e.g. Search.asp?q=<script>alert(1)</script>
-        """
+        """Test XSS in URL parameters — deduplicated by base URL + param key."""
         print(f"\n{Fore.CYAN}[XSS]{Style.RESET_ALL} Testing URL parameters...")
+    
+        tested = set()  # Track (base_url, param_key) combos already tested
+    
         for url in links:
             if "?" not in url:
-                continue  # Skip URLs with no parameters
-
+                continue
+            
             base, params = url.split("?", 1)
             param_pairs  = params.split("&")
-
-            for payload in XSS_PAYLOADS:
-                injected_params = []
-                for pair in param_pairs:
-                    key = pair.split("=")[0]
-                    injected_params.append(f"{key}={payload}")
-
-                injected_url = base + "?" + "&".join(injected_params)
-
-                try:
-                    response = self.session.get(injected_url, timeout=5)
-                    if self.is_vulnerable(response, payload):
-                        result = {
-                            "type"    : "Cross-Site Scripting (XSS) - URL Param",
-                            "url"     : injected_url,
-                            "method"  : "GET",
-                            "payload" : payload,
-                        }
-                        self.vulnerabilities.append(result)
-                        print(f"{Fore.RED}[VULNERABLE]{Style.RESET_ALL} XSS in URL param!")
-                        print(f"  → URL     : {injected_url}")
-                        print(f"  → Payload : {payload}\n")
-                        break
-
-                except Exception as e:
-                    print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} {e}")
+    
+            for pair in param_pairs:
+                key = pair.split("=")[0]
+                signature = f"{base}?{key}"  # e.g. Login.asp?RetURL
+    
+                if signature in tested:
+                    continue  # Skip — already tested this param on this page
+                tested.add(signature)
+    
+                for payload in XSS_PAYLOADS:
+                    injected_url = f"{base}?{key}={payload}"
+                    try:
+                        response = self.session.get(injected_url, timeout=5)
+                        if self.is_vulnerable(response, payload):
+                            result = {
+                                "type"    : "XSS - URL Parameter",
+                                "url"     : injected_url,
+                                "method"  : "GET",
+                                "payload" : payload,
+                            }
+                            self.vulnerabilities.append(result)
+                            print(f"{Fore.RED}[VULNERABLE]{Style.RESET_ALL} XSS in URL param!")
+                            print(f"  → URL     : {injected_url}")
+                            print(f"  → Payload : {payload}\n")
+                            break
+                        else:
+                            print(f"{Fore.YELLOW}[TESTING]{Style.RESET_ALL} {key}={payload[:30]}")
+                    except Exception as e:
+                        print(f"{Fore.RED}[ERROR]{Style.RESET_ALL} {e}")
 
     def scan(self, forms, links=None):
         """Scan all forms and optionally URL params for XSS."""

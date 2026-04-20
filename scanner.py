@@ -8,10 +8,12 @@ from modules.sqli import SQLiScanner
 from modules.xss import XSSScanner
 from modules.headers import HeadersScanner
 from modules.open_redirect import OpenRedirectScanner
+from modules.csrf import CSRFScanner
 
 init(autoreset=True)
 
-BANNER = f"""
+def print_banner():
+    banner = f"""
 {Fore.CYAN}
 ██╗    ██╗███████╗██████╗     ██╗   ██╗██╗   ██╗██╗     ███╗   ██╗
 ██║    ██║██╔════╝██╔══██╗    ██║   ██║██║   ██║██║     ████╗  ██║
@@ -24,9 +26,8 @@ BANNER = f"""
         Use ONLY on targets you have permission to test!
 {Style.RESET_ALL}
 """
+    print(banner)
 
-def print_banner():
-    print(BANNER)
 
 def run_scan(target, max_pages, modules):
     all_vulns = {
@@ -34,6 +35,7 @@ def run_scan(target, max_pages, modules):
         "xss"      : [],
         "headers"  : [],
         "redirect" : [],
+        "csrf"     : [],
     }
 
     # Step 1 — Crawl
@@ -59,7 +61,11 @@ def run_scan(target, max_pages, modules):
     if "redirect" in modules:
         all_vulns["redirect"] = OpenRedirectScanner().scan(results["links"], target)
 
+    if "csrf" in modules:
+        all_vulns["csrf"] = CSRFScanner().scan(results["forms"])
+
     return all_vulns, results
+
 
 def print_summary(all_vulns):
     total = sum(len(v) for v in all_vulns.values())
@@ -70,15 +76,17 @@ def print_summary(all_vulns):
     print(f"  {Fore.RED}XSS  vulnerabilities  : {len(all_vulns['xss'])}{Style.RESET_ALL}")
     print(f"  {Fore.YELLOW}Missing headers       : {len(all_vulns['headers'])}{Style.RESET_ALL}")
     print(f"  {Fore.YELLOW}Open redirects        : {len(all_vulns['redirect'])}{Style.RESET_ALL}")
+    print(f"  {Fore.YELLOW}CSRF vulnerabilities  : {len(all_vulns['csrf'])}{Style.RESET_ALL}")
     print(f"{Fore.BLUE}{'='*55}{Style.RESET_ALL}\n")
+
 
 def generate_report(target, all_vulns, results):
     """Generate a clean HTML report in the reports/ folder."""
     os.makedirs("reports", exist_ok=True)
-    timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename   = f"reports/report_{timestamp}.html"
-    scan_time  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    total      = sum(len(v) for v in all_vulns.values())
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename  = f"reports/report_{timestamp}.html"
+    scan_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    total     = sum(len(v) for v in all_vulns.values())
 
     def vuln_rows(vulns, keys):
         if not vulns:
@@ -100,10 +108,6 @@ def generate_report(target, all_vulns, results):
     h1 {{ color: #00d4ff; font-size: 2em; margin-bottom: 5px; }}
     h2 {{ color: #00d4ff; margin: 30px 0 10px; font-size: 1.2em; border-left: 4px solid #00d4ff; padding-left: 10px; }}
     .meta {{ color: #888; margin-bottom: 30px; font-size: 0.9em; }}
-    .badge {{ display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 0.85em; font-weight: bold; margin: 3px; }}
-    .red    {{ background: #ff4d4d22; color: #ff4d4d; border: 1px solid #ff4d4d; }}
-    .yellow {{ background: #ffd70022; color: #ffd700; border: 1px solid #ffd700; }}
-    .green  {{ background: #00ff8822; color: #00ff88; border: 1px solid #00ff88; }}
     .summary {{ display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 30px; }}
     .card {{ background: #1a1d2e; border-radius: 10px; padding: 20px 30px; text-align: center; flex: 1; min-width: 140px; }}
     .card .num {{ font-size: 2.5em; font-weight: bold; }}
@@ -118,8 +122,12 @@ def generate_report(target, all_vulns, results):
 </head>
 <body>
   <h1>🛡️ Web Vulnerability Scanner</h1>
-  <div class="meta">Target: <strong>{target}</strong> &nbsp;|&nbsp; Scanned: {scan_time} &nbsp;|&nbsp;
-    Pages: {len(results['visited'])} &nbsp;|&nbsp; Forms: {len(results['forms'])}</div>
+  <div class="meta">
+    Target: <strong>{target}</strong> &nbsp;|&nbsp;
+    Scanned: {scan_time} &nbsp;|&nbsp;
+    Pages: {len(results['visited'])} &nbsp;|&nbsp;
+    Forms: {len(results['forms'])}
+  </div>
 
   <div class="disclaimer">
     ⚠️ This report is for <strong>educational purposes only</strong>.
@@ -131,6 +139,7 @@ def generate_report(target, all_vulns, results):
     <div class="card"><div class="num" style="color:#ff4d4d">{len(all_vulns['xss'])}</div><div class="label">XSS</div></div>
     <div class="card"><div class="num" style="color:#ffd700">{len(all_vulns['headers'])}</div><div class="label">Missing Headers</div></div>
     <div class="card"><div class="num" style="color:#ffd700">{len(all_vulns['redirect'])}</div><div class="label">Open Redirects</div></div>
+    <div class="card"><div class="num" style="color:#ff9900">{len(all_vulns['csrf'])}</div><div class="label">CSRF</div></div>
     <div class="card"><div class="num" style="color:#00d4ff">{total}</div><div class="label">Total Issues</div></div>
   </div>
 
@@ -158,6 +167,12 @@ def generate_report(target, all_vulns, results):
     {vuln_rows(all_vulns['redirect'], ['url','payload'])}
   </table>
 
+  <h2>🔄 CSRF Vulnerabilities</h2>
+  <table>
+    <tr><th>Type</th><th>Severity</th><th>URL</th><th>Evidence</th><th>Fix</th></tr>
+    {vuln_rows(all_vulns['csrf'], ['type','severity','url','evidence','fix'])}
+  </table>
+
   <div class="footer">Generated by WebVulnScanner &nbsp;|&nbsp; For educational use only</div>
 </body>
 </html>"""
@@ -168,17 +183,24 @@ def generate_report(target, all_vulns, results):
     print(f"{Fore.GREEN}[+] Report saved → {filename}{Style.RESET_ALL}")
     return filename
 
+
 def main():
     print_banner()
 
     parser = argparse.ArgumentParser(description="Web Vulnerability Scanner")
-    parser.add_argument("target",       help="Target URL (e.g. http://testasp.vulnweb.com)")
-    parser.add_argument("-p", "--pages", type=int, default=20, help="Max pages to crawl (default: 20)")
-    parser.add_argument("-m", "--modules", nargs="+",
-                        default=["sqli", "xss", "headers", "redirect"],
-                        choices=["sqli", "xss", "headers", "redirect"],
+    parser.add_argument("target",
+                        help="Target URL (e.g. http://testasp.vulnweb.com)")
+    parser.add_argument("-p", "--pages",
+                        type=int, default=20,
+                        help="Max pages to crawl (default: 20)")
+    parser.add_argument("-m", "--modules",
+                        nargs="+",
+                        default=["sqli", "xss", "headers", "redirect", "csrf"],
+                        choices=["sqli", "xss", "headers", "redirect", "csrf"],
                         help="Modules to run (default: all)")
-    parser.add_argument("-r", "--report", action="store_true", help="Generate HTML report")
+    parser.add_argument("-r", "--report",
+                        action="store_true",
+                        help="Generate HTML report")
     args = parser.parse_args()
 
     all_vulns, results = run_scan(args.target, args.pages, args.modules)
@@ -186,6 +208,7 @@ def main():
 
     if args.report:
         generate_report(args.target, all_vulns, results)
+
 
 if __name__ == "__main__":
     main()
